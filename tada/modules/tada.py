@@ -30,7 +30,7 @@ class InferenceOptions:
     duration_cfg_scale: float = 1.0
     cfg_schedule: Literal["constant", "linear", "cosine"] = "cosine"
     noise_temperature: float = 0.9
-    num_flow_matching_steps: int = 20
+    num_flow_matching_steps: int = 10
     time_schedule: Literal["uniform", "cosine", "logsnr"] = "logsnr"
     num_acoustic_candidates: int = 1
     scorer: Literal["spkr_verification", "likelihood", "duration_median"] = "likelihood"
@@ -605,9 +605,9 @@ class TadaForCausalLM(LlamaForCausalLM):
                 acoustic_only_norm = (acoustic_only - self.config.acoustic_mean) / self.config.acoustic_std
 
                 with torch.no_grad():
-                    cand_spkr_emb = self.acoustic_spkr_verf(
-                        acoustic_only_norm.reshape(-1, self.config.acoustic_dim)
-                    ).view(num_candidates, batch_size, -1)  # [N, B, 192]
+                    sv_input = acoustic_only_norm.reshape(-1, self.config.acoustic_dim)
+                    sv_input = sv_input.to(next(self.acoustic_spkr_verf.parameters()).dtype)
+                    cand_spkr_emb = self.acoustic_spkr_verf(sv_input).view(num_candidates, batch_size, -1)  # [N, B, 192]
 
                 # Cosine similarity to mean prompt speaker embedding (global anchor)
                 scores = opts.spkr_verification_weight * torch.einsum("nbe,be->nb", cand_spkr_emb, ref_spkr_emb)
@@ -845,7 +845,9 @@ class TadaForCausalLM(LlamaForCausalLM):
             with torch.no_grad():
                 pf_norm_sv = (prompt_acoustic_features - self.config.acoustic_mean) / self.config.acoustic_std
                 B_sv, T_sv, D_sv = pf_norm_sv.shape
-                all_spkr_embs = self.acoustic_spkr_verf(pf_norm_sv.reshape(-1, D_sv)).view(B_sv, T_sv, -1)
+                # Cast to spkr_verf dtype (model may be bf16 while spkr_verf is fp32)
+                sv_dtype = next(self.acoustic_spkr_verf.parameters()).dtype
+                all_spkr_embs = self.acoustic_spkr_verf(pf_norm_sv.reshape(-1, D_sv).to(sv_dtype)).view(B_sv, T_sv, -1)
                 valid_mask_sv_exp = valid_mask_sv.unsqueeze(-1).float()  # [B, T, 1]
                 # Mean-pool speaker embeddings over valid frames, then re-normalize
                 ref_spkr_emb = (all_spkr_embs * valid_mask_sv_exp).sum(dim=1) / valid_mask_sv_exp.sum(dim=1).clamp(
@@ -1200,6 +1202,13 @@ class TadaForCausalLM(LlamaForCausalLM):
         normalize_text: bool = True,
         verbose: bool = False,
     ) -> GenerationOutput:
+        # Auto-cast prompt tensors to model dtype (e.g. fp32 prompt + bf16 model)
+        model_dtype = next(self.parameters()).dtype
+        for field in prompt.__dataclass_fields__:
+            v = getattr(prompt, field)
+            if isinstance(v, torch.Tensor) and v.is_floating_point() and v.dtype != model_dtype:
+                setattr(prompt, field, v.to(model_dtype))
+
         if isinstance(text, str):
             text = [text]
         text = [normalize_text_fn(t) if normalize_text else t for t in text]
