@@ -59,6 +59,17 @@ class TadaConfig:
 
 @dataclass
 class InferenceOptions:
+    """Parameters controlling speech generation behavior.
+
+    Key parameters:
+        text_temperature: Controls randomness of text token sampling. Lower = more deterministic.
+        acoustic_cfg_scale: Classifier-free guidance scale for acoustic features.
+            Higher = better text adherence, lower = more natural prosody.
+        num_flow_matching_steps: Number of Euler steps in the diffusion ODE solver.
+            Fewer = faster but lower quality. 20 is default, 10 is a good balance, 5 is near real-time.
+        noise_temperature: Scale of initial noise for flow matching. Lower = less variation.
+    """
+
     text_do_sample: bool = True
     text_temperature: float = 0.6
     text_top_k: int = 0
@@ -78,6 +89,12 @@ class InferenceOptions:
 
 @dataclass
 class Reference:
+    """Encoded reference audio for voice cloning.
+
+    Created by TadaForCausalLM.load_reference(). Can be saved to disk
+    with save() and loaded with Reference.load() for reuse.
+    """
+
     token_values: np.ndarray
     token_positions: np.ndarray
     token_masks: np.ndarray | None
@@ -88,6 +105,7 @@ class Reference:
     sample_rate: int = 24000
 
     def save(self, path: str) -> None:
+        """Save this reference to a .npz file for later reuse."""
         data = {
             "token_values": self.token_values,
             "token_positions": self.token_positions,
@@ -103,6 +121,7 @@ class Reference:
 
     @classmethod
     def load(cls, path: str) -> "Reference":
+        """Load a previously saved reference from a .npz file."""
         data = np.load(path, allow_pickle=True)
         text = data["text"]
         if isinstance(text, np.ndarray):
@@ -124,6 +143,15 @@ class Reference:
 
 @dataclass
 class GenerationOutput:
+    """Output from TadaForCausalLM.generate().
+
+    Attributes:
+        audio: Raw waveform as numpy float32 array at 24kHz.
+        num_tokens: Number of acoustic tokens generated.
+        duration: Audio duration in seconds.
+        rtf: Real-time factor (generation_time / audio_duration). Below 1.0 is faster than real-time.
+    """
+
     audio: np.ndarray
     num_tokens: int
     duration: float

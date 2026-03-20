@@ -54,6 +54,13 @@ def transcribe_audio(audio_path: str) -> str:
 
 
 def save_wav(wav: np.ndarray, path: str, sample_rate: int = 24000) -> None:
+    """Write a numpy audio array to a WAV file.
+
+    Args:
+        wav: Audio samples as numpy float32 array.
+        path: Output file path.
+        sample_rate: Sample rate in Hz. Default 24000.
+    """
     assert sf_lib is not None, "Saving audio requires soundfile: pip install soundfile"
     audio_np = np.asarray(wav, dtype=np.float32)
     sf_lib.write(path, audio_np, sample_rate)

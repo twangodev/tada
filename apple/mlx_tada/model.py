@@ -1,7 +1,7 @@
 import json
 import logging
 import math
-import time as time_mod
+import time
 from pathlib import Path
 
 import mlx.core as mx
@@ -32,6 +32,11 @@ class ColorFormatter(logging.Formatter):
 
 
 def setup_logging():
+    """Enable colored debug logging for the TADA model.
+
+    Attaches a StreamHandler with ANSI-colored output to the 'tada' logger.
+    Also enabled by setting the DEBUG=1 environment variable when using the CLI.
+    """
     handler = logging.StreamHandler()
     handler.setFormatter(ColorFormatter())
     log.addHandler(handler)
@@ -259,6 +264,17 @@ class TadaForCausalLM(nn.Module):
         quantize: int | None = None,
         quantize_group_size: int = 64,
     ) -> "TadaForCausalLM":
+        """Load a TADA model with all components (LLM, encoder, decoder, aligner, tokenizer).
+
+        Args:
+            weights_dir: Path to the converted MLX weights directory.
+            quantize: Bit width for quantization (4 or 8). None for full precision (bf16).
+                Quantizes the LLM backbone and VibeVoice diffusion head.
+            quantize_group_size: Group size for quantization. Default 64.
+
+        Returns:
+            A fully initialized TadaForCausalLM ready for inference.
+        """
         weights_dir = Path(weights_dir)
         model_dir = weights_dir / "model"
         config_path = model_dir / "config.json"
@@ -301,6 +317,19 @@ class TadaForCausalLM(nn.Module):
         return model
 
     def load_reference(self, audio_path: str, audio_text: str | None = None) -> Reference:
+        """Encode a reference audio file into a Reference for voice cloning.
+
+        Runs the aligner (forced alignment) and encoder to extract acoustic
+        features and token positions from the reference audio.
+
+        Args:
+            audio_path: Path to a reference audio file (any format soundfile supports).
+            audio_text: Transcript of the reference audio. If None, auto-transcribes
+                using mlx-whisper (must be installed).
+
+        Returns:
+            A Reference that can be passed to generate() or saved with ref.save().
+        """
         return prepare_reference(audio_path, audio_text, self._encoder, self._aligner, self._tokenizer)
 
     def _build_inputs(
@@ -312,10 +341,8 @@ class TadaForCausalLM(nn.Module):
         shift = self.config.shift_acoustic
         bos_id = self.config.bos_token_id
         eot_id = self.config.eot_id
-        pad_id = self.config.pad_token_id
-        ref_text = reference.text
-        ref_token_ids = self._tokenizer.encode(ref_text, add_special_tokens=False)
-        target_token_ids = self._tokenizer.encode(" " + text, add_special_tokens=False)
+        ref_token_ids = self._tokenizer.encode(reference.text, add_special_tokens=False)
+        target_token_ids = self._tokenizer.encode("" + text, add_special_tokens=False)
         token_positions_mx = mx.array(reference.token_positions)
         pos_padded = mx.concatenate([mx.ones((1, 1), dtype=token_positions_mx.dtype), token_positions_mx], axis=1)
         time_gaps = mx.clip(token_positions_mx - pos_padded[:, :-1], 0, self.config.num_time_classes - 1)
@@ -348,7 +375,9 @@ class TadaForCausalLM(nn.Module):
         header_depth = mx.cumsum(is_start.astype(mx.int32), axis=1) - mx.cumsum(is_end.astype(mx.int32), axis=1)
         in_header = (header_depth > 0) | is_start | is_end
         is_structural = in_header | (prompt_ids == eot_id) | (prompt_ids == bos_id) | (prompt_ids == 128001)
-        masked_ids = mx.where(is_structural, prompt_ids, mx.full(prompt_ids.shape, pad_id, dtype=mx.int32))
+        masked_ids = mx.where(
+            is_structural, prompt_ids, mx.full(prompt_ids.shape, self.config.pad_token_id, dtype=mx.int32)
+        )
         input_ids = mx.concatenate([masked_ids, input_ids[:, prompt_token_len:]], axis=1)
         n_ac = min(len(prefill_token_ids) - shift - 1, paf.shape[1])
         n_t = min(len(prefill_token_ids) - shift - 1, tlb.shape[1] - 1)
@@ -398,10 +427,7 @@ class TadaForCausalLM(nn.Module):
         opts: InferenceOptions,
     ) -> tuple[list[mx.array], list[mx.array], list[mx.array]]:
         shift = self.config.shift_acoustic
-        eot_id = self.config.eot_id
         pad_id = self.config.pad_token_id
-        start_header_id = self.config.start_header_id
-        end_header_id = self.config.end_header_id
         B = 1
         n_pf = prefill_len - shift
         acoustic_features_val = (
@@ -427,9 +453,13 @@ class TadaForCausalLM(nn.Module):
             all_time_before.append(mx.expand_dims(tlb[:, i + 1], 1))
 
         for step in range(prefill_len, input_ids.shape[1]):
-            t0 = time_mod.time()
+            t0 = time.time()
             input_slice = input_ids[:, step : step + 1]
-            is_structural = (input_slice == start_header_id) | (input_slice == end_header_id) | (input_slice == eot_id)
+            is_structural = (
+                (input_slice == self.config.start_header_id)
+                | (input_slice == self.config.end_header_id)
+                | (input_slice == self.config.eot_id)
+            )
             neg_slice = mx.where(
                 is_structural, input_slice, mx.full(input_slice.shape, pad_id, dtype=input_slice.dtype)
             )
@@ -496,7 +526,7 @@ class TadaForCausalLM(nn.Module):
             mx.eval(input_ids, acoustic_features_val, time_before_val)
             if log.isEnabledFor(logging.INFO):
                 tok_str = self._tokenizer.decode([input_ids[0, -1].item()])
-                log.info(f"step {step}: {tok_str!r}  ({(time_mod.time() - t0) * 1000:.0f}ms)")
+                log.info(f"step {step}: {tok_str!r}  ({(time.time() - t0) * 1000:.0f}ms)")
 
         if last_time_before is not None:
             all_time_before.append(last_time_before)
@@ -541,7 +571,21 @@ class TadaForCausalLM(nn.Module):
         inference_options: InferenceOptions | None = None,
         num_transition_steps: int = 5,
     ) -> GenerationOutput:
-        t_start = time_mod.time()
+        """Generate speech audio from text, cloning the voice from a reference.
+
+        Args:
+            text: The text to speak.
+            reference: A Reference from load_reference() or Reference.load().
+            inference_options: Generation parameters (temperature, CFG scale,
+                flow matching steps, etc.). Uses defaults if None.
+            num_transition_steps: Number of reference frames to regenerate at
+                the boundary between reference and generated speech. Default 5.
+
+        Returns:
+            A GenerationOutput with audio (numpy float32 at 24kHz), duration,
+            real-time factor, and token count.
+        """
+        t_start = time.time()
         opts = inference_options or InferenceOptions()
         text = normalize_text(text)
         input_ids, paf, pam, tlb, tla, prefill_len = self._build_inputs(text, reference, num_transition_steps)
@@ -559,7 +603,7 @@ class TadaForCausalLM(nn.Module):
             opts,
         )
         wav = self._decode_output(all_acoustic, all_time_before, paf.shape[1], num_transition_steps)
-        elapsed = time_mod.time() - t_start
+        elapsed = time.time() - t_start
         audio_np = np.array(wav, dtype=np.float32)
         duration = len(audio_np) / 24000
         rtf = elapsed / duration if duration > 0 else float("inf")
