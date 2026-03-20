@@ -358,7 +358,7 @@ class TadaForCausalLM(nn.Module):
         bos_id = self.config.bos_token_id
         eot_id = self.config.eot_id
         ref_token_ids = self._tokenizer.encode(reference.text, add_special_tokens=False)
-        target_token_ids = self._tokenizer.encode("" + text, add_special_tokens=False)
+        target_token_ids = self._tokenizer.encode(" " + text, add_special_tokens=False)
         token_positions_mx = mx.array(reference.token_positions)
         pos_padded = mx.concatenate([mx.ones((1, 1), dtype=token_positions_mx.dtype), token_positions_mx], axis=1)
         time_gaps = mx.clip(token_positions_mx - pos_padded[:, :-1], 0, self.config.num_time_classes - 1)
