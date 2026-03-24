@@ -15,7 +15,26 @@ For auto-transcription of reference audio (optional):
 uv pip install mlx-whisper
 ```
 
-## Convert Weights
+## Weights
+
+### Option A: Pre-converted weights from Hugging Face (recommended)
+
+No gated model access required. Weights are downloaded and cached automatically:
+
+```python
+from mlx_tada import TadaForCausalLM, save_wav
+
+model = TadaForCausalLM.from_pretrained("HumeAI/mlx-tada-3b", quantize=4)
+ref = model.load_reference("speaker.wav")
+out = model.generate("Hello, this is a test of TADA speech synthesis.", ref)
+save_wav(out.audio, "output.wav")
+```
+
+Available models:
+- [`HumeAI/mlx-tada-1b`](https://huggingface.co/HumeAI/mlx-tada-1b) — 1B English-only (~4.3 GB)
+- [`HumeAI/mlx-tada-3b`](https://huggingface.co/HumeAI/mlx-tada-3b) — 3B multilingual (~8.9 GB)
+
+### Option B: Convert weights yourself
 
 Requires a [Hugging Face](https://huggingface.co/) account with access to `meta-llama/Llama-3.2-1B` (gated model). Login first:
 ```bash
@@ -24,11 +43,20 @@ huggingface-cli login
 
 Then convert:
 ```bash
+uv pip install -e ".[convert]"
+
 # 3B model
 uv run python -m mlx_tada.convert_3b ./weights/3b
 
 # 1B model
 uv run python -m mlx_tada.convert_1b ./weights/1b
+```
+
+Then load from the local path:
+```python
+from mlx_tada import TadaForCausalLM, save_wav
+
+model = TadaForCausalLM.from_weights("./weights/3b", quantize=4)
 ```
 
 ## Generate Speech
@@ -58,7 +86,7 @@ uv run python -m mlx_tada.generate \
 ```python
 from mlx_tada import TadaForCausalLM, save_wav
 
-model = TadaForCausalLM.from_weights("./weights/3b", quantize=4)
+model = TadaForCausalLM.from_pretrained("HumeAI/mlx-tada-3b", quantize=4)
 ref = model.load_reference("speaker.wav")
 out = model.generate("The history of artificial intelligence is a fascinating journey that spans decades of research and innovation. It all began in the 1950s when pioneers like Alan Turing first posed the question of whether machines could think.", ref)
 save_wav(out.audio, "output.wav")
