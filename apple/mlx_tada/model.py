@@ -271,6 +271,30 @@ class TadaForCausalLM(nn.Module):
             return mx.expand_dims(mx.argmax(logits, axis=-1), -1)
 
     @classmethod
+    def from_pretrained(
+        cls,
+        repo_id: str,
+        quantize: int | None = None,
+        quantize_group_size: int = 64,
+    ) -> "TadaForCausalLM":
+        """Load a TADA model from a Hugging Face repo with pre-converted MLX weights.
+
+        Downloads the weights on first use and caches them locally.
+
+        Args:
+            repo_id: Hugging Face repo ID (e.g. "HumeAI/mlx-tada-3b").
+            quantize: Bit width for quantization (4 or 8). None for full precision (bf16).
+            quantize_group_size: Group size for quantization. Default 64.
+
+        Returns:
+            A fully initialized TadaForCausalLM ready for inference.
+        """
+        from huggingface_hub import snapshot_download
+
+        weights_dir = snapshot_download(repo_id)
+        return cls.from_weights(weights_dir, quantize=quantize, quantize_group_size=quantize_group_size)
+
+    @classmethod
     def from_weights(
         cls,
         weights_dir: str | Path,
