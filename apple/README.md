@@ -19,8 +19,6 @@ uv pip install mlx-whisper
 
 ## Weights
 
-### Option A: Pre-converted weights from Hugging Face (recommended)
-
 Pre-converted weights are downloaded and cached automatically. You still need [gated access to Llama 3.2](https://huggingface.co/meta-llama/Llama-3.2-1B) for the tokenizer:
 
 ```python
@@ -36,28 +34,16 @@ Available models:
 - [`HumeAI/mlx-tada-1b`](https://huggingface.co/HumeAI/mlx-tada-1b) — 1B English-only (~4.3 GB)
 - [`HumeAI/mlx-tada-3b`](https://huggingface.co/HumeAI/mlx-tada-3b) — 3B multilingual (~8.9 GB)
 
-### Option B: Convert weights yourself
+### Offline Use
 
-Requires a [Hugging Face](https://huggingface.co/) account with access to `meta-llama/Llama-3.2-1B` (gated model). Login first:
-```bash
-huggingface-cli login
-```
-
-Then convert:
-```bash
-uv pip install -e ".[convert]"
-
-# 3B model
-uv run python -m mlx_tada.convert_3b ./weights/3b
-
-# 1B model
-uv run python -m mlx_tada.convert_1b ./weights/1b
+To download weights locally for offline inference:
+```python
+from huggingface_hub import snapshot_download
+snapshot_download("HumeAI/mlx-tada-3b", local_dir="./weights/3b")
 ```
 
 Then load from the local path:
 ```python
-from mlx_tada import TadaForCausalLM, save_wav
-
 model = TadaForCausalLM.from_weights("./weights/3b", quantize=4)
 ```
 
