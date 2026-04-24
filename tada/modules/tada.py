@@ -1284,14 +1284,15 @@ class TadaForCausalLM(LlamaForCausalLM):
         audio_feat_len = (prompt.audio_len / prompt.sample_rate * 50).ceil().long()
 
         pad_id = self.tokenizer.convert_tokens_to_ids("<|finetune_right_pad_id|>")
-        prompt_text_ids = self.tokenizer.encode(prompt.text[0], add_special_tokens=False)
-        sample_seqs = [
-            [self.sos_id]
-            + prompt_text_ids
-            + self.tokenizer.encode(t, add_special_tokens=False)
-            + [self.eos_id] * self.num_eos_tokens
-            for t in text
-        ]
+        prompt_text = prompt.text[0]
+        prompt_ends_space = bool(prompt_text) and prompt_text[-1].isspace()
+
+        sample_seqs = []
+        for t in text:
+            # Joint-encode with a seam space so BPE doesn't merge across the prompt/gen boundary.
+            sep = "" if prompt_ends_space or not t or t[0].isspace() else " "
+            joint_ids = self.tokenizer.encode(prompt_text + sep + t, add_special_tokens=False)
+            sample_seqs.append([self.sos_id] + joint_ids + [self.eos_id] * self.num_eos_tokens)
         input_lengths = torch.tensor([len(seq) for seq in sample_seqs], device=self.device)
         max_len = int(input_lengths.max().item())
         input_ids = torch.tensor(
