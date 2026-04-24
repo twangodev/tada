@@ -1335,7 +1335,7 @@ class TadaForCausalLM(LlamaForCausalLM):
         prefix_len = prefix_text_tokens.shape[1]
         prefix_text_tokens = prefix_text_tokens.expand(B, -1)
         input_ids = torch.cat([input_ids[:, :1], prefix_text_tokens, input_ids[:, 1:]], dim=1)
-        input_lengths = input_lengths + len(prefix_text_tokens)
+        input_lengths = input_lengths + prefix_len
         prompt_acoustic_features = torch.nn.functional.pad(prompt_acoustic_features, (0, 0, prefix_len, 0))
         prompt_acoustic_masks = torch.nn.functional.pad(prompt_acoustic_masks, (prefix_len, 0))
         time_len_before = torch.nn.functional.pad(time_len_before, (prefix_len, 0))
